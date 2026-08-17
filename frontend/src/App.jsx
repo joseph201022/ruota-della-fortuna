@@ -87,8 +87,11 @@ function getWheelStyles(geometry) {
 // =====================================================
 
 function App() {
+  const adminPath = window.location.pathname
+    .toLowerCase()
+    .replace(/\/$/, '')
   const isAdminPage =
-    window.location.pathname.toLowerCase() === '/admin'
+    adminPath === '/admin' || adminPath === '/admin/add'
 
   useEffect(() => {
     const robotsMeta = document.querySelector('meta[name="robots"]')
@@ -103,7 +106,7 @@ function App() {
   }, [isAdminPage])
 
   if (isAdminPage) {
-    return <AdminPanel />
+    return <AdminPanel isAddUserPage={adminPath === '/admin/add'} />
   }
 
   return <WheelApp />
@@ -803,7 +806,7 @@ function WheelApp() {
 // ADMIN PANEL
 // =====================================================
 
-function AdminPanel() {
+function AdminPanel({ isAddUserPage = false }) {
 
   const [token, setToken] =
     useState(
@@ -814,6 +817,15 @@ function AdminPanel() {
 
   const [password, setPassword] =
     useState('')
+
+  const [username, setUsername] =
+    useState('')
+
+  const [adminUser, setAdminUser] =
+    useState(null)
+
+  const [checkingSession, setCheckingSession] =
+    useState(Boolean(token))
 
   const [loginError, setLoginError] =
     useState('')
@@ -848,12 +860,95 @@ function AdminPanel() {
   const [search, setSearch] =
     useState('')
 
+  const [newUsername, setNewUsername] =
+    useState('')
+
+  const [newPassword, setNewPassword] =
+    useState('')
+
+  const [confirmPassword, setConfirmPassword] =
+    useState('')
+
+  const [creatingUser, setCreatingUser] =
+    useState(false)
+
+  const [userMessage, setUserMessage] =
+    useState('')
+
+  const [userError, setUserError] =
+    useState('')
+
+  // ===================================================
+  // VERIFICA SESSIONE
+  // ===================================================
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!token) {
+      setAdminUser(null)
+      setCheckingSession(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setCheckingSession(true)
+
+    const verifySession = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/admin/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+        const data = await readJson(response)
+
+        if (cancelled) return
+
+        if (!response.ok || !data.user) {
+          localStorage.removeItem('lsc_admin_token')
+          setToken('')
+          setAdminUser(null)
+          return
+        }
+
+        setAdminUser(data.user)
+      } catch (error) {
+        console.error(error)
+
+        if (!cancelled) {
+          setLoginError('Impossibile verificare la sessione admin.')
+          localStorage.removeItem('lsc_admin_token')
+          setToken('')
+          setAdminUser(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingSession(false)
+        }
+      }
+    }
+
+    verifySession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [token, isAddUserPage])
+
   // ===================================================
   // CARICA RUOTE
   // ===================================================
 
   useEffect(() => {
     let cancelled = false
+
+    if (isAddUserPage) {
+      return () => {
+        cancelled = true
+      }
+    }
 
     const loadWheels = async () => {
       try {
@@ -895,7 +990,7 @@ function AdminPanel() {
       cancelled = true
     }
 
-  }, [token])
+  }, [token, isAddUserPage])
 
   // ===================================================
   // CARICA CODICI
@@ -903,11 +998,11 @@ function AdminPanel() {
 
   useEffect(() => {
 
-    if (token) {
+    if (token && !isAddUserPage) {
       loadCodes()
     }
 
-  }, [token])
+  }, [token, isAddUserPage])
 
   // ===================================================
   // LOGIN
@@ -917,10 +1012,10 @@ function AdminPanel() {
 
     e.preventDefault()
 
-    if (!password.trim()) {
+    if (!username.trim() || !password) {
 
       setLoginError(
-        'Inserisci la password.'
+        'Inserisci username e password.'
       )
 
       return
@@ -941,6 +1036,7 @@ function AdminPanel() {
                 'application/json',
             },
             body: JSON.stringify({
+              username: username.trim(),
               password,
             }),
           }
@@ -970,6 +1066,8 @@ function AdminPanel() {
       )
 
       setToken(data.token)
+      setAdminUser(data.user || null)
+      setUsername('')
       setPassword('')
 
     } catch (error) {
@@ -1149,6 +1247,81 @@ function AdminPanel() {
   }
 
   // ===================================================
+  // CREA AMMINISTRATORE
+  // ===================================================
+
+  const addAdminUser = async (e) => {
+    e.preventDefault()
+
+    const cleanUsername = newUsername.trim().toLowerCase()
+
+    if (!cleanUsername || !newPassword || !confirmPassword) {
+      setUserError('Compila tutti i campi.')
+      return
+    }
+
+    if (!/^[a-z0-9._-]{3,32}$/.test(cleanUsername)) {
+      setUserError(
+        'Lo username deve contenere da 3 a 32 caratteri: lettere, numeri, punto, trattino o underscore.'
+      )
+      return
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setUserError('La password deve contenere da 8 a 128 caratteri.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setUserError('Le due password non coincidono.')
+      return
+    }
+
+    setCreatingUser(true)
+    setUserError('')
+    setUserMessage('')
+
+    try {
+      const response = await fetch(`${API_URL}/api/admin/users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          username: cleanUsername,
+          password: newPassword,
+        }),
+      })
+      const data = await readJson(response)
+
+      if (response.status === 401) {
+        await logout()
+        return
+      }
+
+      if (!response.ok) {
+        setUserError(
+          data.message || 'Impossibile creare l’amministratore.'
+        )
+        return
+      }
+
+      setNewUsername('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setUserMessage(
+        `Utente ${data.user?.username || cleanUsername} creato correttamente.`
+      )
+    } catch (error) {
+      console.error(error)
+      setUserError('Errore di connessione al server.')
+    } finally {
+      setCreatingUser(false)
+    }
+  }
+
+  // ===================================================
   // LOGOUT
   // ===================================================
 
@@ -1174,6 +1347,7 @@ function AdminPanel() {
     )
 
     setToken('')
+    setAdminUser(null)
     setCodes([])
   }
 
@@ -1248,6 +1422,26 @@ function AdminPanel() {
   // LOGIN SCREEN
   // ===================================================
 
+  if (token && checkingSession) {
+    return (
+      <main className="admin-page">
+        <section className="admin-login admin-loading-card">
+          <img
+            className="brand-logo admin-brand-logo"
+            src="/lsc-logo.png"
+            alt="Los Santos Custom"
+          />
+          <div className="admin-badge">AREA RISERVATA</div>
+          <h1>
+            Verifica
+            <span>Sessione</span>
+          </h1>
+          <p>Controllo delle credenziali in corso...</p>
+        </section>
+      </main>
+    )
+  }
+
   if (!token) {
 
     return (
@@ -1285,11 +1479,29 @@ function AdminPanel() {
             onSubmit={login}
           >
 
-            <label>
+            <label htmlFor="admin-username">
+              USERNAME
+            </label>
+
+            <input
+              id="admin-username"
+              type="text"
+              placeholder="Inserisci lo username"
+              value={username}
+              onChange={(e) => {
+                setUsername(e.target.value.toLowerCase())
+                setLoginError('')
+              }}
+              autoComplete="username"
+              maxLength={32}
+            />
+
+            <label htmlFor="admin-password">
               PASSWORD ADMIN
             </label>
 
             <input
+              id="admin-password"
               type="password"
               placeholder="Inserisci la password"
               value={password}
@@ -1302,6 +1514,7 @@ function AdminPanel() {
                 setLoginError('')
 
               }}
+              autoComplete="current-password"
             />
 
             {loginError && (
@@ -1327,6 +1540,119 @@ function AdminPanel() {
 
         </section>
 
+      </main>
+    )
+  }
+
+  // ===================================================
+  // AGGIUNGI AMMINISTRATORE
+  // ===================================================
+
+  if (isAddUserPage) {
+    const isSuperAdmin = adminUser?.role === 'superadmin'
+
+    return (
+      <main className="admin-page">
+        <div className="admin-glow admin-glow-one" />
+        <div className="admin-glow admin-glow-two" />
+
+        <section className="admin-login admin-user-card">
+          <img
+            className="brand-logo admin-brand-logo"
+            src="/lsc-logo.png"
+            alt="Los Santos Custom"
+          />
+
+          <div className="admin-badge">GESTIONE ACCESSI</div>
+
+          <h1>
+            Nuovo
+            <span>Amministratore</span>
+          </h1>
+
+          {!isSuperAdmin ? (
+            <>
+              <div className="admin-login-error">
+                ⚠️ Solo il Super Admin può aggiungere nuovi utenti.
+              </div>
+              <a className="admin-secondary-link" href="/admin">
+                ← TORNA AL PANNELLO
+              </a>
+            </>
+          ) : (
+            <form onSubmit={addAdminUser}>
+              <label htmlFor="new-admin-username">USERNAME</label>
+              <input
+                id="new-admin-username"
+                type="text"
+                placeholder="es. collaboratore01"
+                value={newUsername}
+                onChange={(e) => {
+                  setNewUsername(e.target.value.toLowerCase())
+                  setUserError('')
+                  setUserMessage('')
+                }}
+                autoComplete="off"
+                maxLength={32}
+              />
+
+              <label htmlFor="new-admin-password">PASSWORD</label>
+              <input
+                id="new-admin-password"
+                type="password"
+                placeholder="Almeno 8 caratteri"
+                value={newPassword}
+                onChange={(e) => {
+                  setNewPassword(e.target.value)
+                  setUserError('')
+                  setUserMessage('')
+                }}
+                autoComplete="new-password"
+                maxLength={128}
+              />
+
+              <label htmlFor="confirm-admin-password">
+                CONFERMA PASSWORD
+              </label>
+              <input
+                id="confirm-admin-password"
+                type="password"
+                placeholder="Ripeti la password"
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value)
+                  setUserError('')
+                  setUserMessage('')
+                }}
+                autoComplete="new-password"
+                maxLength={128}
+              />
+
+              {userError && (
+                <div className="admin-login-error">⚠️ {userError}</div>
+              )}
+
+              {userMessage && (
+                <div className="admin-user-success">✅ {userMessage}</div>
+              )}
+
+              <button
+                className="admin-login-button"
+                disabled={creatingUser}
+              >
+                {creatingUser ? 'CREAZIONE...' : 'CREA AMMINISTRATORE'}
+              </button>
+
+              <a className="admin-secondary-link" href="/admin">
+                ← TORNA AL PANNELLO
+              </a>
+            </form>
+          )}
+
+          <div className="admin-login-footer">
+            ACCESSO: {adminUser?.username || '—'}
+          </div>
+        </section>
       </main>
     )
   }
@@ -1409,12 +1735,24 @@ function AdminPanel() {
 
           </div>
 
-          <button
-            className="admin-logout"
-            onClick={logout}
-          >
-            🔒 ESCI
-          </button>
+          <div className="admin-header-actions">
+            <span className="admin-current-user">
+              👤 {adminUser?.username || 'admin'}
+            </span>
+
+            {adminUser?.role === 'superadmin' && (
+              <a className="admin-add-user-link" href="/admin/add">
+                ➕ AGGIUNGI UTENTE
+              </a>
+            )}
+
+            <button
+              className="admin-logout"
+              onClick={logout}
+            >
+              🔒 ESCI
+            </button>
+          </div>
 
         </header>
 
