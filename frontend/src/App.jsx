@@ -122,6 +122,7 @@ function WheelApp() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [spinning, setSpinning] = useState(false)
+  const [freeSpinAwarded, setFreeSpinAwarded] = useState(false)
   const [rotation, setRotation] = useState(0)
   const spinTimeoutRef = useRef(null)
   const wheelGeometry = wheel
@@ -200,6 +201,7 @@ function WheelApp() {
       setCode(data.code || cleanCode)
       setWheel(selectedWheel)
       setGameId('')
+      setFreeSpinAwarded(false)
       setResult(null)
       setRotation(0)
       setScreen('player-id')
@@ -242,6 +244,7 @@ function WheelApp() {
     }
 
     setSpinning(true)
+    setFreeSpinAwarded(false)
     setError('')
     setResult(null)
 
@@ -302,8 +305,16 @@ function WheelApp() {
       setRotation(finalRotation)
 
       spinTimeoutRef.current = setTimeout(() => {
-        setResult(data.prize)
         setSpinning(false)
+
+        if (data.freeSpin) {
+          setResult(null)
+          setFreeSpinAwarded(true)
+          setScreen('wheel')
+          return
+        }
+
+        setResult(data.prize)
         setScreen('result')
       }, SPIN_DURATION_MS)
     } catch (error) {
@@ -326,6 +337,7 @@ function WheelApp() {
     setGameId('')
     setWheel(null)
     setResult(null)
+    setFreeSpinAwarded(false)
     setError('')
     setRotation(0)
     setScreen('welcome')
@@ -637,6 +649,17 @@ function WheelApp() {
 
             <div className="wheel-actions">
 
+              {freeSpinAwarded && (
+                <div className="free-spin-message">
+                  <strong>
+                    🔄 SECONDO GIRO GRATIS
+                  </strong>
+                  <span>
+                    Devi rigirare la ruota per ricevere il premio definitivo.
+                  </span>
+                </div>
+              )}
+
               <button
                 className="big-spin-button"
                 onClick={spinWheel}
@@ -650,7 +673,9 @@ function WheelApp() {
                   </>
                 ) : (
                   <>
-                    🎡 GIRA LA RUOTA
+                    {freeSpinAwarded
+                      ? '🔄 RIGIRA LA RUOTA'
+                      : '🎡 GIRA LA RUOTA'}
                   </>
                 )}
 

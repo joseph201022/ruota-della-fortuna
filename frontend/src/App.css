@@ -948,6 +948,38 @@ h1 span {
   align-items: center;
 }
 
+.free-spin-message {
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(75, 172, 255, 0.55);
+  border-radius: 14px;
+  color: #d7efff;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(12, 83, 160, 0.45),
+      rgba(19, 46, 91, 0.72)
+    );
+  box-shadow: 0 12px 32px rgba(12, 97, 190, 0.22);
+  text-align: center;
+}
+
+.free-spin-message strong {
+  color: #ffffff;
+  font-size: 14px;
+  letter-spacing: 0.9px;
+}
+
+.free-spin-message span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* =====================================================
    SPIN BUTTON
 ===================================================== */
