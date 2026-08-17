@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ruota-fortuna-lsc.onrender.com/sitemap.xml
+Sitemap: https://ruota-fortuna-lsc.onrender.com/sitemap.txt
