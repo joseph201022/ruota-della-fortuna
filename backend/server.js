@@ -15,6 +15,7 @@ const PORT = Number(process.env.PORT) || 3001
 // =====================================================
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL
 const CLIENT_ORIGINS = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
@@ -35,6 +36,12 @@ const CODES_FILE = path.join(DATA_DIR, 'codes.json')
 if (!ADMIN_PASSWORD) {
   throw new Error(
     'ADMIN_PASSWORD mancante: crea un file .env partendo da .env.example.'
+  )
+}
+
+if (!DISCORD_WEBHOOK_URL) {
+  console.warn(
+    'DISCORD_WEBHOOK_URL mancante: i giri non verranno registrati su Discord.'
   )
 }
 
@@ -520,6 +527,84 @@ function drawPrize(prizes) {
 }
 
 // =====================================================
+// LOG DISCORD
+// =====================================================
+
+async function sendDiscordSpinLog({
+  gameId,
+  code,
+  wheel,
+  prize,
+  spunAt,
+}) {
+  if (!DISCORD_WEBHOOK_URL) {
+    return false
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+
+  try {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: 'LSC Ruota della Fortuna',
+        allowed_mentions: {
+          parse: [],
+        },
+        embeds: [
+          {
+            title: '🎡 Nuovo giro della ruota',
+            color: 0xf5a623,
+            fields: [
+              {
+                name: 'ID In Game',
+                value: gameId,
+                inline: true,
+              },
+              {
+                name: 'Codice',
+                value: code,
+                inline: true,
+              },
+              {
+                name: 'Ruota',
+                value: wheel,
+                inline: false,
+              },
+              {
+                name: 'Premio',
+                value: `${prize.emoji || '🎁'} ${prize.label}`,
+                inline: false,
+              },
+            ],
+            timestamp: spunAt,
+            footer: {
+              text: 'LSC • Sistema Ruota della Fortuna',
+            },
+          },
+        ],
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord ha risposto con stato ${response.status}.`)
+    }
+
+    return true
+  } catch (error) {
+    console.error('Invio log Discord non riuscito:', error.message)
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+// =====================================================
 // STATUS
 // =====================================================
 
@@ -642,6 +727,7 @@ app.post(
         createdAt:
           new Date().toISOString(),
         usedAt: null,
+        playerId: null,
       }
 
       codes.set(code, newCode)
@@ -719,11 +805,23 @@ app.post(
 
 app.post(
   '/api/codes/spin',
-  (req, res) => {
+  async (req, res) => {
     const code =
       String(req.body.code || '')
         .trim()
         .toUpperCase()
+
+    const gameId =
+      String(req.body.gameId || '')
+        .trim()
+        .replace(/[\r\n\t]/g, ' ')
+
+    if (!gameId || gameId.length > 64) {
+      return res.status(400).json({
+        success: false,
+        message: 'Inserisci un ID In Game valido.',
+      })
+    }
 
     const codeData =
       codes.get(code)
@@ -772,10 +870,12 @@ app.post(
       used: codeData.used,
       prize: codeData.prize,
       usedAt: codeData.usedAt,
+      playerId: codeData.playerId,
     }
 
     codeData.used = true
     codeData.prize = prize
+    codeData.playerId = gameId
     codeData.usedAt =
       new Date().toISOString()
 
@@ -790,11 +890,20 @@ app.post(
       })
     }
 
+    const discordLogged = await sendDiscordSpinLog({
+      gameId,
+      code: codeData.code,
+      wheel: wheel.name,
+      prize,
+      spunAt: codeData.usedAt,
+    })
+
     res.json({
       success: true,
       code: codeData.code,
       wheel: wheel.name,
       prize,
+      discordLogged,
     })
   }
 )
