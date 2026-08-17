@@ -7,6 +7,15 @@ const path = require('path')
 
 dotenv.config()
 
+const {
+  authenticateAdmin,
+  createAdmin,
+  initializeAdminStore,
+  isD1Configured,
+  listAdmins,
+  normalizeUsername,
+} = require('./admin-store')
+
 const app = express()
 const PORT = Number(process.env.PORT) || 3001
 
@@ -15,6 +24,9 @@ const PORT = Number(process.env.PORT) || 3001
 // =====================================================
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
+const ADMIN_USERNAME = normalizeUsername(
+  process.env.ADMIN_USERNAME || 'admin'
+)
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL
 const CLIENT_ORIGINS = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
   .split(',')
@@ -44,6 +56,25 @@ if (!DISCORD_WEBHOOK_URL) {
     'DISCORD_WEBHOOK_URL mancante: i giri non verranno registrati su Discord.'
   )
 }
+
+let adminStoreMode = 'initializing'
+
+const adminStoreReady = initializeAdminStore({
+  bootstrapUsername: ADMIN_USERNAME,
+  bootstrapPassword: ADMIN_PASSWORD,
+})
+  .then((result) => {
+    adminStoreMode = result.mode
+    return result
+  })
+  .catch((error) => {
+    adminStoreMode = 'legacy'
+    console.error(
+      'Cloudflare D1 non disponibile, accesso admin legacy mantenuto:',
+      error.message
+    )
+    return { mode: 'legacy', error }
+  })
 
 // =====================================================
 // MIDDLEWARE
@@ -154,7 +185,7 @@ function generateAdminToken() {
   return crypto.randomBytes(32).toString('hex')
 }
 
-function hasValidAdminPassword(password) {
+function hasValidLegacyAdminPassword(password) {
   const expected = Buffer.from(ADMIN_PASSWORD)
   const received = Buffer.from(password)
 
@@ -199,14 +230,27 @@ function requireAdmin(req, res, next) {
   const token =
     authorization.substring(7)
 
-  const expiresAt = adminTokens.get(token)
+  const session = adminTokens.get(token)
 
-  if (!expiresAt || expiresAt <= Date.now()) {
+  if (!session || session.expiresAt <= Date.now()) {
     adminTokens.delete(token)
 
     return res.status(401).json({
       success: false,
       message: 'Sessione admin non valida o scaduta.',
+    })
+  }
+
+  req.admin = session.user
+  req.adminToken = token
+  next()
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (req.admin?.role !== 'superadmin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Solo il Super Admin può gestire gli utenti.',
     })
   }
 
@@ -621,21 +665,52 @@ app.get('/api/status', (req, res) => {
 // LOGIN ADMIN
 // =====================================================
 
-app.post('/api/admin/login', loginRateLimiter, (req, res) => {
+app.post('/api/admin/login', loginRateLimiter, async (req, res) => {
+  const username = normalizeUsername(req.body.username || ADMIN_USERNAME)
   const password =
     String(req.body.password || '')
 
-  if (!password) {
+  if (!username || !password) {
     return res.status(400).json({
       success: false,
-      message: 'Inserisci la password.',
+      message: 'Inserisci username e password.',
     })
   }
 
-  if (!hasValidAdminPassword(password)) {
+  await adminStoreReady
+
+  let admin = null
+
+  try {
+    if (adminStoreMode === 'd1') {
+      admin = await authenticateAdmin(username, password)
+    } else if (
+      username === ADMIN_USERNAME &&
+      hasValidLegacyAdminPassword(password)
+    ) {
+      admin = {
+        id: 'legacy-superadmin',
+        username: ADMIN_USERNAME,
+        role: 'superadmin',
+        active: true,
+      }
+    }
+  } catch (error) {
+    console.error('Errore login amministratore:', error.message)
+
+    return res.status(error.statusCode || 503).json({
+      success: false,
+      message:
+        error.statusCode === 400
+          ? error.message
+          : 'Database amministratori temporaneamente non disponibile.',
+    })
+  }
+
+  if (!admin) {
     return res.status(401).json({
       success: false,
-      message: 'Password non corretta.',
+      message: 'Username o password non corretti.',
     })
   }
 
@@ -643,15 +718,104 @@ app.post('/api/admin/login', loginRateLimiter, (req, res) => {
 
   adminTokens.set(
     token,
-    Date.now() + ADMIN_SESSION_DURATION_MS
+    {
+      expiresAt: Date.now() + ADMIN_SESSION_DURATION_MS,
+      user: admin,
+    }
   )
   loginAttempts.delete(req.ip)
 
   res.json({
     success: true,
     token,
+    user: admin,
   })
 })
+
+// =====================================================
+// SESSIONE E UTENTI ADMIN
+// =====================================================
+
+app.get(
+  '/api/admin/me',
+  requireAdmin,
+  (req, res) => {
+    res.json({
+      success: true,
+      user: req.admin,
+      database: adminStoreMode,
+    })
+  }
+)
+
+app.get(
+  '/api/admin/users',
+  requireAdmin,
+  requireSuperAdmin,
+  async (req, res) => {
+    if (adminStoreMode !== 'd1') {
+      return res.status(503).json({
+        success: false,
+        message: 'Cloudflare D1 non è ancora configurato.',
+      })
+    }
+
+    try {
+      const users = await listAdmins()
+
+      return res.json({
+        success: true,
+        users,
+      })
+    } catch (error) {
+      console.error('Errore elenco amministratori:', error.message)
+
+      return res.status(503).json({
+        success: false,
+        message: 'Impossibile caricare gli amministratori.',
+      })
+    }
+  }
+)
+
+app.post(
+  '/api/admin/users',
+  requireAdmin,
+  requireSuperAdmin,
+  async (req, res) => {
+    if (adminStoreMode !== 'd1') {
+      return res.status(503).json({
+        success: false,
+        message: 'Cloudflare D1 non è ancora configurato.',
+      })
+    }
+
+    try {
+      const user = await createAdmin({
+        username: req.body.username,
+        password: String(req.body.password || ''),
+        role: 'admin',
+        createdBy: req.admin.username,
+      })
+
+      return res.status(201).json({
+        success: true,
+        message: 'Amministratore creato correttamente.',
+        user,
+      })
+    } catch (error) {
+      console.error('Errore creazione amministratore:', error.message)
+
+      return res.status(error.statusCode || 503).json({
+        success: false,
+        message:
+          error.statusCode && error.statusCode < 500
+            ? error.message
+            : 'Impossibile creare l’amministratore.',
+      })
+    }
+  }
+)
 
 // =====================================================
 // LOGOUT ADMIN
@@ -661,10 +825,7 @@ app.post(
   '/api/admin/logout',
   requireAdmin,
   (req, res) => {
-    const token =
-      req.headers.authorization.substring(7)
-
-    adminTokens.delete(token)
+    adminTokens.delete(req.adminToken)
 
     res.json({
       success: true,
@@ -970,9 +1131,12 @@ app.get(
 // AVVIO SERVER
 // =====================================================
 
-app.listen(
-  PORT,
-  () => {
+async function startServer() {
+  await adminStoreReady
+
+  app.listen(
+    PORT,
+    () => {
     console.log('')
     console.log(
       '======================================'
@@ -993,5 +1157,15 @@ app.listen(
       '======================================'
     )
     console.log('')
-  }
-)
+    console.log(
+      `       Admin DB: ${adminStoreMode === 'd1' ? 'Cloudflare D1' : 'legacy'}`
+    )
+    console.log('')
+    }
+  )
+}
+
+startServer().catch((error) => {
+  console.error('Avvio server non riuscito:', error)
+  process.exit(1)
+})
