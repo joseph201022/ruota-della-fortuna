@@ -728,6 +728,7 @@ app.post(
           new Date().toISOString(),
         usedAt: null,
         playerId: null,
+        freeSpins: 0,
       }
 
       codes.set(code, newCode)
@@ -871,13 +872,25 @@ app.post(
       prize: codeData.prize,
       usedAt: codeData.usedAt,
       playerId: codeData.playerId,
+      freeSpins: codeData.freeSpins,
     }
 
-    codeData.used = true
-    codeData.prize = prize
+    const isFreeSpin = prize.id === 'free-spin'
+    const spunAt = new Date().toISOString()
+
     codeData.playerId = gameId
-    codeData.usedAt =
-      new Date().toISOString()
+    codeData.freeSpins =
+      Number(codeData.freeSpins || 0) + (isFreeSpin ? 1 : 0)
+
+    if (isFreeSpin) {
+      codeData.used = false
+      codeData.prize = null
+      codeData.usedAt = null
+    } else {
+      codeData.used = true
+      codeData.prize = prize
+      codeData.usedAt = spunAt
+    }
 
     codes.set(code, codeData)
 
@@ -895,7 +908,7 @@ app.post(
       code: codeData.code,
       wheel: wheel.name,
       prize,
-      spunAt: codeData.usedAt,
+      spunAt,
     })
 
     res.json({
@@ -903,6 +916,7 @@ app.post(
       code: codeData.code,
       wheel: wheel.name,
       prize,
+      freeSpin: isFreeSpin,
       discordLogged,
     })
   }
