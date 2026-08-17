@@ -115,6 +115,7 @@ function App() {
 
 function WheelApp() {
   const [code, setCode] = useState('')
+  const [gameId, setGameId] = useState('')
   const [screen, setScreen] = useState('welcome')
   const [wheel, setWheel] = useState(null)
   const [result, setResult] = useState(null)
@@ -145,8 +146,8 @@ function WheelApp() {
 
     const cleanCode = code.trim().toUpperCase()
 
-    if (!cleanCode) {
-      setError('Inserisci un codice per continuare.')
+    if (!/^[A-Z0-9]{4}$/.test(cleanCode)) {
+      setError('Inserisci un codice alfanumerico di 4 caratteri.')
       return
     }
 
@@ -198,9 +199,10 @@ function WheelApp() {
 
       setCode(data.code || cleanCode)
       setWheel(selectedWheel)
+      setGameId('')
       setResult(null)
       setRotation(0)
-      setScreen('wheel')
+      setScreen('player-id')
     } catch (error) {
       console.error(error)
 
@@ -210,12 +212,32 @@ function WheelApp() {
     }
   }
 
+  const confirmGameId = (e) => {
+    e.preventDefault()
+
+    const cleanGameId = gameId.trim()
+
+    if (!cleanGameId) {
+      setError('Inserisci il tuo ID In Game per continuare.')
+      return
+    }
+
+    if (cleanGameId.length > 64) {
+      setError('L\'ID In Game non può superare 64 caratteri.')
+      return
+    }
+
+    setGameId(cleanGameId)
+    setError('')
+    setScreen('wheel')
+  }
+
   // ===================================================
   // GIRA RUOTA
   // ===================================================
 
   const spinWheel = async () => {
-    if (spinning || !wheel) {
+    if (spinning || !wheel || !gameId) {
       return
     }
 
@@ -233,6 +255,7 @@ function WheelApp() {
           },
           body: JSON.stringify({
             code,
+            gameId,
           }),
         }
       )
@@ -300,6 +323,7 @@ function WheelApp() {
 
   const resetPage = () => {
     setCode('')
+    setGameId('')
     setWheel(null)
     setResult(null)
     setError('')
@@ -371,13 +395,18 @@ function WheelApp() {
                 value={code}
                 onChange={(e) => {
                   setCode(
-                    e.target.value.toUpperCase()
+                    e.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, '')
+                      .slice(0, 4)
                   )
 
                   setError('')
                 }}
                 autoComplete="off"
                 spellCheck="false"
+                inputMode="text"
+                maxLength={4}
                 disabled={loading}
               />
 
@@ -426,6 +455,89 @@ function WheelApp() {
             </div>
 
           </div>
+
+        </section>
+      )}
+
+      {/* =============================================
+          ID IN GAME
+      ============================================= */}
+
+      {screen === 'player-id' && (
+        <section className="welcome-card">
+
+          <div className="top-badge">
+            <span className="badge-dot" />
+            CODICE VERIFICATO
+          </div>
+
+          <img
+            className="brand-logo welcome-brand-logo"
+            src="/lsc-logo.png"
+            alt="Los Santos Custom"
+          />
+
+          <h1>
+            Inserisci Il Tuo
+            <span>
+              Id In Game
+            </span>
+          </h1>
+
+          <p className="description">
+            L'ID verrà associato al risultato della ruota.
+          </p>
+
+          <form
+            onSubmit={confirmGameId}
+            className="code-form"
+          >
+
+            <label htmlFor="game-id">
+              INSERISCI IL TUO ID IN GAME
+            </label>
+
+            <div className="input-wrapper">
+
+              <span className="input-icon">
+                🎮
+              </span>
+
+              <input
+                id="game-id"
+                type="text"
+                placeholder="Il tuo ID In Game"
+                value={gameId}
+                onChange={(e) => {
+                  setGameId(e.target.value.slice(0, 64))
+                  setError('')
+                }}
+                autoComplete="off"
+                spellCheck="false"
+                maxLength={64}
+                autoFocus
+              />
+
+            </div>
+
+            <button
+              type="submit"
+              className="access-button"
+            >
+              CONTINUA ALLA RUOTA
+              <span className="arrow">
+                →
+              </span>
+            </button>
+
+          </form>
+
+          {error && (
+            <div className="error-message">
+              <span>⚠️</span>
+              {error}
+            </div>
+          )}
 
         </section>
       )}
@@ -551,6 +663,13 @@ function WheelApp() {
                 </strong>
               </div>
 
+              <div className="code-display">
+                ID IN GAME:
+                <strong>
+                  {gameId}
+                </strong>
+              </div>
+
             </div>
 
             {error && (
@@ -603,6 +722,18 @@ function WheelApp() {
 
               <strong>
                 {code}
+              </strong>
+
+            </div>
+
+            <div className="result-code">
+
+              <span>
+                ID IN GAME
+              </span>
+
+              <strong>
+                {gameId}
               </strong>
 
             </div>
